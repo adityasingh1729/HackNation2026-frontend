@@ -24,8 +24,9 @@ const ProductCard = ({
   const { getQuantity, setProductQuantity } = useCart();
   const { profile } = useProfile();
   const currency = profile?.currency || "USD";
-  const [showReason, setShowReason] = useState(isBestPick); // Show by default for best picks
+  const [reasonExpanded, setReasonExpanded] = useState(false);
   const quantity = getQuantity(id);
+  const reasonTruncated = reason && reason.length > 80;
 
   const product = { id, name, brand, price, originalPrice, image, rating, reviews, category, delivery, reason, url: url || "" };
 
@@ -125,27 +126,23 @@ const ProductCard = ({
             </p>
           )}
 
-          {/* Reason - Always shown for best pick, collapsible for others */}
-          {isBestPick ? (
-            <p className="text-[10px] text-muted-foreground italic leading-relaxed border-l-2 border-primary pl-1.5 line-clamp-2">
-              "{reason}"
-            </p>
-          ) : (
-            <>
-              <button
-                onClick={() => setShowReason(!showReason)}
-                className="flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors w-fit"
-              >
-                Why this pick?
-                {showReason ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
-              </button>
-              
-              {showReason && (
-                <p className="text-[10px] text-muted-foreground italic leading-relaxed border-l-2 border-primary/30 pl-1.5 animate-fade-in line-clamp-2">
-                  "{reason}"
-                </p>
+          {/* Reason - expandable when long */}
+          {reason && (
+            <div className="border-l-2 border-primary/30 pl-1.5">
+              <p className={`text-[10px] text-muted-foreground italic leading-relaxed ${!reasonExpanded && reasonTruncated ? "line-clamp-2" : ""}`}>
+                {reason}
+              </p>
+              {reasonTruncated && (
+                <button
+                  type="button"
+                  onClick={() => setReasonExpanded(!reasonExpanded)}
+                  className="flex items-center gap-0.5 text-[10px] text-primary hover:text-primary/80 mt-0.5 transition-colors"
+                >
+                  {reasonExpanded ? "Show less" : "Read more"}
+                  {reasonExpanded ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+                </button>
               )}
-            </>
+            </div>
           )}
 
           {/* Spacer to push actions to bottom */}
@@ -245,9 +242,23 @@ const ProductCard = ({
           )}
         </div>
 
-        <p className="text-xs text-muted-foreground italic mt-2 leading-relaxed border-l-2 border-primary/30 pl-2">
-          "{reason}"
-        </p>
+        {reason && (
+          <div className="mt-2 border-l-2 border-primary/30 pl-2">
+            <p className={`text-xs text-muted-foreground italic leading-relaxed ${!reasonExpanded && reason && reason.length > 100 ? "line-clamp-2" : ""}`}>
+              {reason}
+            </p>
+            {reason && reason.length > 100 && (
+              <button
+                type="button"
+                onClick={() => setReasonExpanded(!reasonExpanded)}
+                className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 mt-1"
+              >
+                {reasonExpanded ? "Show less" : "Read more"}
+                {reasonExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col items-end justify-between">

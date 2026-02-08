@@ -1,13 +1,24 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Send, Award } from "lucide-react";
+import { ChevronDown, ChevronUp, Send, Award, Loader2 } from "lucide-react";
 import ProductCard from "./ProductCard";
+import { useSearchResults } from "../context/SearchResultsContext";
 
 const CategorySection = ({ category, bestPick, alternatives }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [preference, setPreference] = useState("");
+  const { refineForCategory, refineLoadingCategory, lastSpec } = useSearchResults();
+  const isRefining = refineLoadingCategory === category;
 
-  // Combine best pick with alternatives for rendering
-  const allProducts = bestPick 
+  const specItem = lastSpec?.items?.find(
+    (i) => (i.query || "").toLowerCase() === (category || "").toLowerCase()
+  ) || lastSpec?.items?.find((i) => i.query === category);
+  const originalPreferences = specItem?.preferences || "";
+
+  const handleRefine = () => {
+    refineForCategory(category, preference || undefined);
+  };
+
+  const allProducts = bestPick
     ? [{ ...bestPick, isBestPick: true }, ...alternatives]
     : alternatives;
 
@@ -29,10 +40,13 @@ const CategorySection = ({ category, bestPick, alternatives }) => {
 
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border hover:border-primary hover:bg-primary/5 transition-all text-sm font-medium text-foreground"
+          disabled={isRefining}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border hover:border-primary hover:bg-primary/5 transition-all text-sm font-medium text-foreground disabled:opacity-60"
         >
           Refine
-          {isExpanded ? (
+          {isRefining ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : isExpanded ? (
             <ChevronUp className="w-4 h-4" />
           ) : (
             <ChevronDown className="w-4 h-4" />
@@ -52,26 +66,40 @@ const CategorySection = ({ category, bestPick, alternatives }) => {
         ))}
       </div>
 
-      {/* Refinement Input - Below Cards */}
+      {/* Refinement Input - uses same API as chatbot (json spec: pincode, budget, etc.) */}
       {isExpanded && (
         <div className="mt-6 pt-4 border-t border-border animate-fade-in">
+          <p className="text-xs text-muted-foreground mb-2">
+            Refine results for this product using the same search as the chatbot (pincode, budget & currency from your plan).
+            {originalPreferences && (
+              <span className="block mt-1">
+                Current preferences: &ldquo;{originalPreferences}&rdquo;
+              </span>
+            )}
+          </p>
           <div className="flex gap-2">
             <input
               type="text"
               value={preference}
               onChange={(e) => setPreference(e.target.value)}
-              placeholder={`Specify preferences for ${category.toLowerCase()}...`}
+              onKeyDown={(e) => e.key === "Enter" && handleRefine()}
+              placeholder={originalPreferences || `e.g. under $100, waterproof, eco-friendly`}
               className="flex-1 px-4 py-3 rounded-xl border border-border bg-background focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm text-foreground placeholder:text-muted-foreground"
+              disabled={isRefining}
             />
             <button
-              className="p-3 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              onClick={handleRefine}
+              disabled={isRefining}
+              className="p-3 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60 flex items-center justify-center gap-2 min-w-[100px]"
             >
-              <Send className="w-4 h-4" />
+              {isRefining ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
+              {!isRefining && "Refine"}
             </button>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            E.g., "under $300", "extra warm", "eco-friendly materials"
-          </p>
         </div>
       )}
     </div>

@@ -73,7 +73,7 @@ export const CartProvider = ({ children }) => {
     return Object.values(cartItems).filter((item) => item.quantity > 0);
   }, [cartItems]);
 
-  /** Format cart for checkout executor API: { items: [{ url, quantity, itemId, title }] } */
+  /** Format cart for checkout executor API: { items: [{ url, quantity, itemId, title, name, brand }] } */
   const getCartForCheckout = useCallback(() => {
     return {
       items: getCartProducts()
@@ -83,6 +83,8 @@ export const CartProvider = ({ children }) => {
           url: item.url,
           quantity: item.quantity,
           title: item.name,
+          name: item.name,
+          brand: item.brand,
         })),
     };
   }, [cartItems, getCartProducts]);

@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { api } from "../lib/api";
 
 const ProfileContext = createContext(null);
+
+const PROFILE_STORAGE_KEY = "agentic_profile";
 
 export const useProfile = () => {
   const context = useContext(ProfileContext);
@@ -11,7 +12,44 @@ export const useProfile = () => {
   return context;
 };
 
-const defaultProfile = { name: "", address: "", pincode: "", currency: "USD" };
+const defaultProfile = {
+  name: "",
+  email: "",
+  phone: "",
+  address: "",
+  city: "",
+  state: "",
+  pincode: "",
+  country: "",
+  currency: "USD",
+};
+
+function loadProfileFromStorage() {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+    if (!raw) return defaultProfile;
+    const data = JSON.parse(raw);
+    return {
+      name: data.name ?? "",
+      email: data.email ?? "",
+      phone: data.phone ?? "",
+      address: data.address ?? "",
+      city: data.city ?? "",
+      state: data.state ?? "",
+      pincode: data.pincode ?? "",
+      country: data.country ?? "",
+      currency: (data.currency ?? "USD").toUpperCase(),
+    };
+  } catch {
+    return defaultProfile;
+  }
+}
+
+function saveProfileToStorage(profile) {
+  try {
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  } catch (_) {}
+}
 
 /**
  * Merge chatbot json_output with user profile: use profile's pincode and currency
@@ -32,25 +70,11 @@ export const ProfileProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const loadProfile = useCallback(async () => {
+  const loadProfile = useCallback(() => {
     setLoading(true);
     setError(null);
-    try {
-      const res = await fetch(api.profile);
-      if (res.ok) {
-        const data = await res.json();
-        setProfileState({
-          name: data.name ?? "",
-          address: data.address ?? "",
-          pincode: data.pincode ?? "",
-          currency: data.currency ?? "USD",
-        });
-      }
-    } catch (err) {
-      setError(err.message || "Could not load profile");
-    } finally {
-      setLoading(false);
-    }
+    setProfileState(loadProfileFromStorage());
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -59,25 +83,20 @@ export const ProfileProvider = ({ children }) => {
 
   const saveProfile = useCallback(async (newProfile) => {
     setError(null);
-    try {
-      const res = await fetch(api.profile, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newProfile),
-      });
-      if (!res.ok) throw new Error("Failed to save");
-      const data = await res.json();
-      setProfileState({
-        name: data.name ?? "",
-        address: data.address ?? "",
-        pincode: data.pincode ?? "",
-        currency: data.currency ?? "USD",
-      });
-      return true;
-    } catch (err) {
-      setError(err.message || "Could not save profile");
-      return false;
-    }
+    const saved = {
+      name: String(newProfile.name ?? ""),
+      email: String(newProfile.email ?? ""),
+      phone: String(newProfile.phone ?? ""),
+      address: String(newProfile.address ?? ""),
+      city: String(newProfile.city ?? ""),
+      state: String(newProfile.state ?? ""),
+      pincode: String(newProfile.pincode ?? ""),
+      country: String(newProfile.country ?? ""),
+      currency: (String(newProfile.currency ?? "USD").toUpperCase()) || "USD",
+    };
+    saveProfileToStorage(saved);
+    setProfileState(saved);
+    return true;
   }, []);
 
   return (

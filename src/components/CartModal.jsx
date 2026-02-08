@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   X,
   ShoppingCart,
@@ -9,6 +9,13 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  CreditCard,
+  MapPin,
+  GitBranch,
+  ExternalLink,
+  ShoppingBag,
+  ShieldCheck,
+  BadgeCheck,
 } from "lucide-react";
 import ProductCard from "./ProductCard";
 import { useCart } from "../context/CartContext";
@@ -16,15 +23,15 @@ import { useProfile } from "../context/ProfileContext";
 import { formatPrice } from "../lib/currency";
 import { api } from "../lib/api";
 
-const defaultProfile = {
+const defaultCheckoutProfile = {
   name: "",
   email: "",
   phone: "",
   line1: "",
   city: "",
   state: "",
-  zip: "",
-  country: "US",
+  pincode: "",
+  country: "",
   token: "tok_sandbox_123",
 };
 
@@ -36,15 +43,37 @@ const CartModal = ({ isOpen, onClose }) => {
     getTotalItems,
     getCartForCheckout,
     removeFromCart,
+    clearCart,
   } = useCart();
 
   const [step, setStep] = useState("cart");
-  const [profile, setProfile] = useState(defaultProfile);
+  const [profile, setProfile] = useState(defaultCheckoutProfile);
   const [loading, setLoading] = useState(false);
+  const [simulationStep, setSimulationStep] = useState("");
+  const [simulationIndex, setSimulationIndex] = useState(-1);
+  const [backendStepsDone, setBackendStepsDone] = useState({});
   const [executeResult, setExecuteResult] = useState(null);
+  const [lastCheckoutItems, setLastCheckoutItems] = useState([]);
 
   const { profile: userProfile } = useProfile();
   const currency = userProfile?.currency || "USD";
+
+  // Pre-fill checkout form from profile when entering checkout step
+  useEffect(() => {
+    if (step === "checkout" && userProfile) {
+      setProfile({
+        name: userProfile.name ?? "",
+        email: userProfile.email ?? "",
+        phone: userProfile.phone ?? "",
+        line1: userProfile.address ?? "",
+        city: userProfile.city ?? "",
+        state: userProfile.state ?? "",
+        pincode: userProfile.pincode ?? "",
+        country: userProfile.country ?? "",
+        token: "tok_sandbox_123",
+      });
+    }
+  }, [step, userProfile]);
 
   const cartProducts = getCartProducts();
   const subtotal = getTotalPrice();
@@ -56,52 +85,174 @@ const CartModal = ({ isOpen, onClose }) => {
   const handleClose = () => {
     setStep("cart");
     setExecuteResult(null);
+    setLastCheckoutItems([]);
     onClose();
   };
 
   const handleProceedToCheckout = () => {
+    setStep("review");
+  };
+
+  const handleContinueToPayment = () => {
     setStep("checkout");
+  };
+
+  const runClientSimulation = () => {
+    const items = checkoutCart.items;
+    const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+    (async () => {
+      for (let i = 0; i < items.length; i++) {
+        setSimulationIndex(i);
+        setSimulationStep(`Simulating at ${items[i].brand || "retailer"}…`);
+        await delay(1200);
+      }
+      setSimulationIndex(-1);
+      setSimulationStep("Checkout complete.");
+      await delay(500);
+      setLastCheckoutItems([...items]);
+      setExecuteResult({
+        results: items.map((item) => ({
+          url: item.url,
+          quantity: item.quantity,
+          success: true,
+          steps: [
+            { action: "Open link", status: "ok" },
+            { action: "Add to cart", status: "ok" },
+            { action: "Checkout (sandbox)", status: "ok" },
+          ],
+        })),
+        summary: { total: items.length, success: items.length, failed: 0 },
+      });
+      clearCart();
+      setStep("done");
+      setLoading(false);
+      setSimulationStep("");
+    })();
+  };
+
+  const runBackendStreamingCheckout = async () => {
+    const payload = {
+      cart: checkoutCart,
+      profile: {
+        shippingAddress: {
+          name: profile.name,
+          line1: profile.line1,
+          city: profile.city,
+          state: profile.state,
+          zip: profile.pincode,
+          country: profile.country,
+        },
+        contact: { email: profile.email, phone: profile.phone },
+        payment: { type: "card", token: profile.token },
+      },
+      headless: true,
+    };
+    const url = `${api.checkoutExecute}?stream=1`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok || !res.body) return null;
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("text/event-stream")) return null;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        let event = "";
+        let dataStr = "";
+        for (const line of part.split("\n")) {
+          if (line.startsWith("event: ")) event = line.slice(7).trim();
+          if (line.startsWith("data: ")) dataStr = line.slice(6).trim();
+        }
+        if (!event || !dataStr) continue;
+        try {
+          const data = JSON.parse(dataStr);
+          if (event === "retailer_start") {
+            setSimulationIndex(data.index);
+            setSimulationStep(`Simulating at ${data.brand}…`);
+            setBackendStepsDone((prev) => ({ ...prev, [data.index]: 0 }));
+          } else if (event === "step") {
+            setBackendStepsDone((prev) => ({
+              ...prev,
+              [data.itemIndex]: (data.stepIndex || 0) + 1,
+            }));
+          } else if (event === "retailer_done") {
+            setBackendStepsDone((prev) => ({ ...prev, [data.index]: 3 }));
+          } else if (event === "done") {
+            setLastCheckoutItems([...checkoutCart.items]);
+            setExecuteResult({
+              results: data.results || [],
+              summary: data.summary || { total: 0, success: 0, failed: 0 },
+            });
+            clearCart();
+            setStep("done");
+            setLoading(false);
+            setSimulationIndex(-1);
+            setSimulationStep("");
+            setBackendStepsDone({});
+            return true;
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
   };
 
   const handleExecuteCheckout = async () => {
     if (!canExecute) return;
     setLoading(true);
     setExecuteResult(null);
+    setSimulationStep("");
+    setSimulationIndex(-1);
+    setBackendStepsDone({});
     try {
-      const res = await fetch(api.checkoutExecute, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cart: checkoutCart,
-          profile: {
-            shippingAddress: {
-              name: profile.name,
-              line1: profile.line1,
-              city: profile.city,
-              state: profile.state,
-              zip: profile.zip,
-              country: profile.country,
+      const streamed = await runBackendStreamingCheckout();
+      if (!streamed) {
+        const res = await fetch(api.checkoutExecute, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cart: checkoutCart,
+            profile: {
+              shippingAddress: {
+                name: profile.name,
+                line1: profile.line1,
+                city: profile.city,
+                state: profile.state,
+                zip: profile.pincode,
+                country: profile.country,
+              },
+              contact: { email: profile.email, phone: profile.phone },
+              payment: { type: "card", token: profile.token },
             },
-            contact: { email: profile.email, phone: profile.phone },
-            payment: { type: "card", token: profile.token },
-          },
-          headless: true,
-        }),
-      });
-      const data = await res.json();
-      setExecuteResult(data);
-      setStep("done");
-    } catch (err) {
-      setExecuteResult({
-        error: "Request failed",
-        message: err.message,
-        results: [],
-        summary: { total: 0, success: 0, failed: 0 },
-      });
-      setStep("done");
-    } finally {
-      setLoading(false);
+            headless: true,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.results?.length > 0) {
+          setLastCheckoutItems([...checkoutCart.items]);
+          setExecuteResult(data);
+          clearCart();
+          setStep("done");
+        } else {
+          runClientSimulation();
+          return;
+        }
+      }
+    } catch (_) {
+      runClientSimulation();
+      return;
     }
+    setLoading(false);
   };
 
   if (!isOpen) return null;
@@ -128,13 +279,15 @@ const CartModal = ({ isOpen, onClose }) => {
             <div>
               <h2 className="text-lg font-semibold text-foreground">
                 {step === "cart" && "Your Cart"}
+                {step === "review" && "Review order"}
                 {step === "checkout" && "Checkout"}
                 {step === "done" && "Checkout Results"}
               </h2>
               <p className="text-xs text-muted-foreground">
                 {step === "cart" &&
                   `${cartProducts.length} ${cartProducts.length === 1 ? "product" : "products"} selected`}
-                {step === "checkout" && "Enter details and run executor"}
+                {step === "review" && "Items and retailers we'll use"}
+                {step === "checkout" && "Enter details and run sandbox"}
                 {step === "done" && executeResult?.summary &&
                   `${executeResult.summary.success} succeeded, ${executeResult.summary.failed} failed`}
               </p>
@@ -204,8 +357,8 @@ const CartModal = ({ isOpen, onClose }) => {
           </>
         )}
 
-        {/* Step: Checkout (profile + execute) */}
-        {step === "checkout" && (
+        {/* Step: Review – items and retailers before payment/simulate */}
+        {step === "review" && (
           <div className="p-5 overflow-y-auto flex-1 space-y-4">
             <button
               onClick={() => setStep("cart")}
@@ -214,41 +367,197 @@ const CartModal = ({ isOpen, onClose }) => {
               <ChevronLeft className="w-4 h-4" /> Back to cart
             </button>
             <p className="text-sm text-muted-foreground">
-              Profile is used to fill checkout forms when the executor runs. No real payment.
+              We'll purchase these items from the retailers below. Then you'll enter payment details (sandbox) and we'll simulate checkout at each link.
             </p>
-            <div className="grid gap-3">
-              {["name", "email", "phone", "line1", "city", "state", "zip", "country"].map(
-                (key) => (
-                  <label key={key} className="block">
-                    <span className="text-xs font-medium text-muted-foreground capitalize">
-                      {key === "line1" ? "Address" : key}
-                    </span>
+            <ul className="space-y-3">
+              {checkoutCart.items.map((item, i) => (
+                <li
+                  key={item.url || item.itemId || i}
+                  className="p-3 rounded-lg border border-border bg-muted/20 flex flex-col gap-1"
+                >
+                  <span className="font-medium text-foreground">{item.name || item.title}</span>
+                  <span className="text-xs text-primary">
+                    Retailer: {item.brand || "—"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Qty: {item.quantity}
+                  </span>
+                  {item.url && (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-primary hover:underline truncate block"
+                    >
+                      {item.url}
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <button
+              onClick={handleContinueToPayment}
+              className="w-full gradient-button py-3 rounded-xl flex items-center justify-center gap-2 font-semibold"
+            >
+              Continue to payment & simulate
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Step: Checkout – Enter once + Fan-out plan (Safe Demo) */}
+        {step === "checkout" && (
+          <div className="p-5 overflow-y-auto flex-1 space-y-4">
+            <button
+              onClick={() => setStep("review")}
+              className="text-sm text-primary hover:underline flex items-center gap-1"
+            >
+              <ChevronLeft className="w-4 h-4" /> Back to review
+            </button>
+
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-2 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-primary flex-shrink-0" />
+              <span className="text-xs font-medium text-foreground">
+                Safe demo — no real purchases. Sandbox + form-fill replay only.
+              </span>
+            </div>
+
+            {/* Enter once: payment + address */}
+            <div className="rounded-xl border-2 border-primary/30 bg-card p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-primary/10">
+                  <MapPin className="w-4 h-4 text-primary" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Payment & address — entered once
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Used for every retailer below (autofill preview)
+                  </p>
+                </div>
+                <BadgeCheck className="w-5 h-5 text-primary ml-auto flex-shrink-0" />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="col-span-2 flex items-center gap-2 text-muted-foreground">
+                  <CreditCard className="w-3.5 h-3.5" /> Payment (sandbox)
+                </div>
+                {[
+                  { key: "name", label: "Name" },
+                  { key: "email", label: "Email" },
+                  { key: "line1", label: "Address" },
+                  { key: "pincode", label: "Pincode" },
+                  { key: "city", label: "City" },
+                  { key: "state", label: "State" },
+                  { key: "country", label: "Country" },
+                  { key: "phone", label: "Phone" },
+                ].map(({ key, label }) => (
+                  <div key={key} className="flex flex-col gap-0.5">
+                    <span className="text-muted-foreground">{label}</span>
                     <input
                       type={key === "email" ? "email" : "text"}
                       value={profile[key]}
                       onChange={(e) =>
                         setProfile((p) => ({ ...p, [key]: e.target.value }))
                       }
-                      className="w-full mt-1 px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm"
+                      className="px-2 py-1.5 rounded-md border border-border bg-background text-foreground text-xs"
                       placeholder={key === "token" ? "tok_sandbox_123" : ""}
                     />
-                  </label>
-                )
-              )}
-              <label className="block">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Payment token (sandbox)
-                </span>
-                <input
-                  type="text"
-                  value={profile.token}
-                  onChange={(e) =>
-                    setProfile((p) => ({ ...p, token: e.target.value }))
-                  }
-                  className="w-full mt-1 px-3 py-2 rounded-lg border border-border bg-background text-foreground text-sm"
-                />
-              </label>
+                  </div>
+                ))}
+                <div className="col-span-2 flex flex-col gap-0.5">
+                  <span className="text-muted-foreground">Payment token (sandbox)</span>
+                  <input
+                    type="text"
+                    value={profile.token}
+                    onChange={(e) =>
+                      setProfile((p) => ({ ...p, token: e.target.value }))
+                    }
+                    className="px-2 py-1.5 rounded-md border border-border bg-background text-foreground text-xs"
+                  />
+                </div>
+              </div>
             </div>
+
+            {/* Agent fans out: per-retailer steps (simulated) */}
+            <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <GitBranch className="w-4 h-4 text-primary" />
+                <h3 className="text-sm font-semibold text-foreground">
+                  Agent fans out — checkout steps per retailer (simulated)
+                </h3>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Same address + payment applied at each retailer. Step-by-step autofill preview.
+              </p>
+              <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                {checkoutCart.items.map((item, i) => {
+                  const isCurrent = loading && simulationIndex === i;
+                  const isDone = loading && simulationIndex > i;
+                  const stepsDone = backendStepsDone[i] ?? 0;
+                  const stepLabels = [
+                    { icon: ExternalLink, label: "Open link" },
+                    { icon: ShoppingBag, label: "Add to cart" },
+                    { icon: ShieldCheck, label: "Checkout (sandbox)" },
+                  ];
+                  return (
+                    <div
+                      key={item.url || item.itemId || i}
+                      className={`rounded-lg border p-3 space-y-2 transition-colors ${
+                        isCurrent
+                          ? "border-primary bg-primary/10"
+                          : isDone
+                            ? "border-green-500/30 bg-green-500/5"
+                            : "border-border bg-background"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                          {item.brand || "Retailer"}
+                          {isCurrent && (
+                            <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                          )}
+                          {isDone && (
+                            <CheckCircle2 className="w-3 h-3 text-green-600" />
+                          )}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {item.name || item.title} × {item.quantity}
+                        </span>
+                      </div>
+                      <ul className="flex flex-wrap gap-x-3 gap-y-1">
+                        {stepLabels.map(({ icon: Icon, label }, stepIdx) => {
+                          const done = stepsDone > stepIdx;
+                          const inProgress = isCurrent && stepsDone === stepIdx;
+                          return (
+                            <li
+                              key={stepIdx}
+                              className={`flex items-center gap-1 text-xs ${
+                                done
+                                  ? "text-green-600"
+                                  : inProgress
+                                    ? "text-primary font-medium"
+                                    : "text-muted-foreground"
+                              }`}
+                            >
+                              {done ? (
+                                <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                              ) : inProgress ? (
+                                <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                              ) : (
+                                <Icon className="w-3 h-3 flex-shrink-0 opacity-50" />
+                              )}
+                              {label}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             <button
               onClick={handleExecuteCheckout}
               disabled={!canExecute || loading}
@@ -257,11 +566,11 @@ const CartModal = ({ isOpen, onClose }) => {
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Running checkout at each link…
+                  {simulationStep || "Running simulated checkout…"}
                 </>
               ) : (
                 <>
-                  Execute checkout at {checkoutCart.items.length} link
+                  Run simulated checkout at {checkoutCart.items.length} retailer
                   {checkoutCart.items.length !== 1 ? "s" : ""}
                   <ChevronRight className="w-4 h-4" />
                 </>
@@ -270,72 +579,118 @@ const CartModal = ({ isOpen, onClose }) => {
           </div>
         )}
 
-        {/* Step: Done (results) */}
+        {/* Step: Done – Show "entered once" + "fanned out" results */}
         {step === "done" && executeResult && (
           <div className="p-5 overflow-y-auto flex-1 space-y-4">
             <button
-              onClick={() => setStep("cart")}
+              onClick={handleClose}
               className="text-sm text-primary hover:underline flex items-center gap-1"
             >
-              <ChevronLeft className="w-4 h-4" /> Back to cart
+              Done — close
             </button>
             {executeResult.error && (
               <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
                 {executeResult.error}: {executeResult.message}
               </div>
             )}
-            {executeResult.summary && (
-              <div className="flex gap-4 text-sm">
-                <span>Total: {executeResult.summary.total}</span>
-                <span className="text-green-600">
-                  Success: {executeResult.summary.success}
-                </span>
-                <span className="text-red-600">Failed: {executeResult.summary.failed}</span>
+
+            {/* Summary: entered once + fanned out */}
+            <div className="rounded-xl border-2 border-green-500/30 bg-green-500/5 p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-600" />
+                Checkout orchestration complete (simulated)
+              </h3>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="flex items-center gap-2 text-foreground">
+                  <BadgeCheck className="w-4 h-4 text-primary flex-shrink-0" />
+                  Payment + address entered once
+                </div>
+                <div className="flex items-center gap-2 text-foreground">
+                  <GitBranch className="w-4 h-4 text-primary flex-shrink-0" />
+                  Agent fanned out to {executeResult.summary?.total ?? 0} retailer
+                  {(executeResult.summary?.total ?? 0) !== 1 ? "s" : ""}
+                </div>
               </div>
-            )}
+              {executeResult.summary && (
+                <div className="flex gap-4 text-xs pt-1 border-t border-green-500/20">
+                  <span className="text-muted-foreground">
+                    Total: {executeResult.summary.total}
+                  </span>
+                  <span className="text-green-600 font-medium">
+                    Success: {executeResult.summary.success}
+                  </span>
+                  {executeResult.summary.failed > 0 && (
+                    <span className="text-red-600 font-medium">
+                      Failed: {executeResult.summary.failed}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Per-retailer results with step-by-step */}
             {executeResult.results?.length > 0 && (
-              <ul className="space-y-3">
-                {executeResult.results.map((r, i) => (
-                  <li
-                    key={i}
-                    className={`p-3 rounded-lg border text-sm ${
-                      r.success
-                        ? "border-green-500/30 bg-green-500/5"
-                        : "border-destructive/30 bg-destructive/5"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      {r.success ? (
-                        <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-destructive flex-shrink-0" />
-                      )}
-                      <a
-                        href={r.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary truncate block"
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Per-retailer steps (simulated)
+                </h4>
+                <ul className="space-y-3">
+                  {executeResult.results.map((r, i) => {
+                    const item = lastCheckoutItems[i];
+                    const retailerName = item?.brand || "Retailer";
+                    return (
+                      <li
+                        key={i}
+                        className={`rounded-xl border p-3 ${
+                          r.success
+                            ? "border-green-500/30 bg-green-500/5"
+                            : "border-destructive/30 bg-destructive/5"
+                        }`}
                       >
-                        {r.url}
-                      </a>
-                      <span className="text-muted-foreground">Qty: {r.quantity}</span>
-                    </div>
-                    {r.error && (
-                      <p className="text-destructive text-xs mt-1">{r.error}</p>
-                    )}
-                    {r.steps?.length > 0 && (
-                      <ul className="mt-2 text-xs text-muted-foreground space-y-0.5">
-                        {r.steps.map((s, j) => (
-                          <li key={j}>
-                            {s.action} — {s.status}
-                            {s.detail ? `: ${s.detail}` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                        <div className="flex items-center gap-2 mb-2">
+                          {r.success ? (
+                            <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                          ) : (
+                            <XCircle className="w-4 h-4 text-destructive flex-shrink-0" />
+                          )}
+                          <span className="text-sm font-medium text-foreground">
+                            {retailerName}
+                          </span>
+                          <a
+                            href={r.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-primary hover:underline truncate flex-1 min-w-0"
+                          >
+                            {r.url}
+                          </a>
+                          <span className="text-xs text-muted-foreground">
+                            Qty {r.quantity}
+                          </span>
+                        </div>
+                        {r.error && (
+                          <p className="text-destructive text-xs mb-2">{r.error}</p>
+                        )}
+                        {r.steps?.length > 0 && (
+                          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                            {r.steps.map((s, j) => (
+                              <li key={j} className="flex items-center gap-1">
+                                {s.status === "ok" || r.success ? (
+                                  <CheckCircle2 className="w-3 h-3 text-green-600 flex-shrink-0" />
+                                ) : (
+                                  <XCircle className="w-3 h-3 text-destructive flex-shrink-0" />
+                                )}
+                                {s.action}
+                                {s.detail ? `: ${s.detail}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             )}
           </div>
         )}

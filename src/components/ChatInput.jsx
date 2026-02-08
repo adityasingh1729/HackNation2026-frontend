@@ -1,4 +1,4 @@
-import { Send, Mic, Bot, User, MapPin, Calendar, Wallet, Package } from "lucide-react";
+import { Send, Mic, Bot, User, MapPin, Calendar, Wallet, Package, ChevronUp, ChevronDown, MessageCircle } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import AIWaveform from "./AIWaveform";
 import { useSearchResults } from "../context/SearchResultsContext";
@@ -25,8 +25,15 @@ const ChatInput = () => {
   const [error, setError] = useState(null);
   const [jsonOutput, setJsonOutput] = useState(null);
   const messagesEndRef = useRef(null);
-  const { runShop, shopLoading, shopError } = useSearchResults();
+  const { runShop, shopLoading, shopError, searchResults } = useSearchResults();
   const { profile, mergeSpecWithProfile } = useProfile();
+  const hasResults = searchResults?.final_results != null;
+  const canMinimize = Boolean(jsonOutput && (shopLoading || hasResults));
+  const [expanded, setExpanded] = useState(true);
+
+  useEffect(() => {
+    if (canMinimize) setExpanded(false);
+  }, [canMinimize]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -102,12 +109,46 @@ const ChatInput = () => {
     }
   };
 
+  const showFullChat = !canMinimize || expanded;
+
   return (
     <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background via-background to-transparent">
       <div className="max-w-4xl mx-auto">
-        {/* Chat thread */}
+        {/* Minimized bar: after confirmation, collapse so results area is visible */}
+        {canMinimize && !expanded && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="glass-card w-full py-3 px-4 flex items-center justify-center gap-2 text-sm text-foreground hover:bg-muted/50 transition-colors rounded-xl mb-2"
+          >
+            <MessageCircle className="w-4 h-4 text-primary" />
+            {shopLoading ? (
+              <>
+                <span className="animate-pulse">Searching across retailers to find best fit…</span>
+              </>
+            ) : (
+              <span>Results ready above • Tap to open chat</span>
+            )}
+            <ChevronUp className="w-4 h-4 text-muted-foreground" />
+          </button>
+        )}
+
+        {/* Full chat thread */}
+        {showFullChat && (
+          <>
         {(messages.length > 0 || error) && (
           <div className="glass-card p-3 mb-2 max-h-[240px] overflow-y-auto scrollbar-thin space-y-3">
+            {canMinimize && (
+              <div className="flex justify-end mb-1">
+                <button
+                  type="button"
+                  onClick={() => setExpanded(false)}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  <ChevronDown className="w-3 h-3" /> Minimize
+                </button>
+              </div>
+            )}
             {messages.map((m, i) => (
               <div
                 key={i}
@@ -140,7 +181,7 @@ const ChatInput = () => {
                   <Bot className="w-4 h-4 text-primary animate-pulse" />
                 </div>
                 <div className="rounded-xl px-3 py-2 text-sm bg-muted text-muted-foreground">
-                  {loading ? "Thinking…" : "Searching for products…"}
+                  {loading ? "Thinking…" : "Searching across retailers to find best fit…"}
                 </div>
               </div>
             )}
@@ -207,7 +248,7 @@ const ChatInput = () => {
         )}
 
         {/* Input bar */}
-        <div className="glass-card p-2 flex items-center gap-3">
+            <div className="glass-card p-2 flex items-center gap-3">
           <button
             onClick={() => setIsListening(!isListening)}
             className={`p-3 rounded-lg transition-all duration-300 ${
@@ -236,11 +277,13 @@ const ChatInput = () => {
           >
             <Send className="w-5 h-5" />
           </button>
-        </div>
+            </div>
 
-        <p className="text-center text-xs text-muted-foreground mt-3">
-          AI Agent v2.0 • Chat calls the shopping assistant API
-        </p>
+            <p className="text-center text-xs text-muted-foreground mt-3">
+              AI Agent v2.0 • Chat calls the shopping assistant API
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
