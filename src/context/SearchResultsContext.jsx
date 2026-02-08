@@ -51,6 +51,36 @@ export function buildCategoryDataFromSearch(finalResults) {
 }
 
 /**
+ * Get search summary from raw_results: unique retailers count and total products count.
+ * Reads from raw_results[category].total_products and all_products[].source (or total_retailers / unique_retailers when present).
+ */
+export function getSearchSummary(searchResults) {
+  const raw = searchResults?.raw_results;
+  if (!raw || typeof raw !== "object") return { uniqueRetailers: 0, totalProducts: 0 };
+
+  let totalProducts = 0;
+  const retailerSet = new Set();
+
+  for (const categoryData of Object.values(raw)) {
+    if (!categoryData || typeof categoryData !== "object") continue;
+    const allProducts = categoryData.all_products;
+    const count = categoryData.total_products ?? (Array.isArray(allProducts) ? allProducts.length : 0);
+    totalProducts += count;
+    if (Array.isArray(allProducts)) {
+      for (const p of allProducts) {
+        const src = p?.source;
+        if (src != null && String(src).trim()) retailerSet.add(String(src).trim());
+      }
+    }
+    if (Array.isArray(categoryData.unique_retailers)) {
+      categoryData.unique_retailers.forEach((r) => r != null && retailerSet.add(String(r)));
+    }
+  }
+
+  return { uniqueRetailers: retailerSet.size, totalProducts };
+}
+
+/**
  * Normalize /shop response to a single shape for the rest of the app.
  * Backend may return either:
  * - Legacy: { raw_results, final_results: { items: { [category]: { recommendations } } } }

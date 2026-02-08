@@ -7,7 +7,7 @@ import CartModal from "../components/CartModal";
 import ProfileModal from "../components/ProfileModal";
 import NavigationArrows from "../components/NavigationArrows";
 import { useCart } from "../context/CartContext";
-import { useSearchResults, buildCategoryDataFromSearch } from "../context/SearchResultsContext";
+import { useSearchResults, buildCategoryDataFromSearch, getSearchSummary } from "../context/SearchResultsContext";
 
 const Index = () => {
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -20,6 +20,7 @@ const Index = () => {
   const categoryData = searchResults?.final_results
     ? buildCategoryDataFromSearch(searchResults.final_results)
     : [];
+  const { uniqueRetailers, totalProducts } = getSearchSummary(searchResults);
 
   const hasResults = categoryData.length > 0;
 
@@ -44,6 +45,11 @@ const Index = () => {
                     : "Chat with the AI agent, confirm your order, then see results here"}
               </span>
             </div>
+            {hasResults && (uniqueRetailers > 0 || totalProducts > 0) && (
+              <p className="text-sm font-medium text-foreground mb-4">
+                Searched across <span className="text-primary">{uniqueRetailers}</span> unique retailer{uniqueRetailers !== 1 ? "s" : ""} and <span className="text-primary">{totalProducts}</span> product{totalProducts !== 1 ? "s" : ""}.
+              </p>
+            )}
             {hasResults && (
               <div className="flex items-center justify-end">
                 <NavigationArrows
