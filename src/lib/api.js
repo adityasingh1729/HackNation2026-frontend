@@ -1,7 +1,6 @@
 /**
  * API base URL for the Agentic Commerce backend (deployed main.py).
  * Override with VITE_API_URL in .env for local or other deployments.
- * tests
  */
 
 export const API_BASE =
