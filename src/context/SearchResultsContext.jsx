@@ -50,6 +50,37 @@ export function buildCategoryDataFromSearch(finalResults) {
   }).filter((c) => c.bestPick || c.alternatives.length > 0);
 }
 
+/**
+ * Normalize /shop response to a single shape for the rest of the app.
+ * Backend may return either:
+ * - Legacy: { raw_results, final_results: { items: { [category]: { recommendations } } } }
+ * - Flat (combined_shopping_app): { budget_summary, [category]: { recommendations, ... }, ... }
+ */
+function normalizeShopResponse(data) {
+  if (!data || typeof data !== "object") return data;
+  // Already in legacy shape with final_results.items
+  if (data.final_results?.items && typeof data.final_results.items === "object") {
+    return { raw_results: data.raw_results || {}, final_results: data.final_results };
+  }
+  // Flat shape: budget_summary + category keys with .recommendations
+  const items = {};
+  let budget_summary = null;
+  for (const [key, value] of Object.entries(data)) {
+    if (key === "budget_summary" && value != null) {
+      budget_summary = value;
+    } else if (value && typeof value === "object" && value.recommendations) {
+      items[key] = value;
+    }
+  }
+  return {
+    raw_results: data.raw_results || {},
+    final_results: {
+      ...(budget_summary && { budget_summary }),
+      items,
+    },
+  };
+}
+
 /** Merge new single-category /shop response into existing full results */
 function mergeCategoryIntoResults(prev, newData, category) {
   if (!prev || !newData) return prev;
@@ -104,8 +135,9 @@ export const SearchResultsProvider = ({ children }) => {
         setShopError(data.detail || data.message || "Shop request failed");
         return null;
       }
-      setSearchResults(data);
-      return data;
+      const normalized = normalizeShopResponse(data);
+      setSearchResults(normalized);
+      return normalized;
     } catch (err) {
       setShopError(err.message || "Shop unavailable");
       return null;
@@ -157,8 +189,9 @@ export const SearchResultsProvider = ({ children }) => {
           setShopError(data.detail || data.message || "Refine failed");
           return null;
         }
-        setSearchResults((prev) => mergeCategoryIntoResults(prev, data, category));
-        return data;
+        const normalized = normalizeShopResponse(data);
+        setSearchResults((prev) => mergeCategoryIntoResults(prev, normalized, category));
+        return normalized;
       } catch (err) {
         setShopError(err.message || "Refine unavailable");
         return null;

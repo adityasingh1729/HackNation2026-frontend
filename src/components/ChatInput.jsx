@@ -53,13 +53,9 @@ const ChatInput = () => {
     setLoading(true);
 
     try {
+      // Backend expects only session_id and message (conversation state is server-side)
       const body = {
         session_id: sessionId || "",
-        delivery_pincode: profile?.pincode ?? jsonOutput?.delivery_pincode ?? "",
-        delivery_deadline_date: jsonOutput?.delivery_deadline_date ?? "",
-        total_budget: jsonOutput?.total_budget ?? 0,
-        budget_currency: (profile?.currency || jsonOutput?.budget_currency || "USD").toUpperCase(),
-        items: Array.isArray(jsonOutput?.items) ? jsonOutput.items : [],
         message: text,
       };
       const res = await fetch(api.chat, {
